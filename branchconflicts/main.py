@@ -7,25 +7,33 @@ from branchconflicts.Commit import Commit
 
 
 def find_conflicts(repo_owner: str, repo_name: str, access_token: str, local_repo_path: str, branch_a: str, branch_b: str) -> list:
-    try:
-        conflicted_files = []
-        modified_files_local = []
 
-        remote_branch = find_branch_by_name_remote(f"https://api.github.com/repos/{repo_owner}/{repo_name}", branch_a)
-        local_branch = find_branch_by_name_local(local_repo_path, branch_b)
-        # if remote_branch and local_branch:
-        #     print(remote_branch, local_branch)
+    api = f"https://api.github.com/repos/{repo_owner}/{repo_name}"
+    conflicted_files = []
+    modified_files_local = []
 
-        merge_base_sha = find_merge_base(remote_branch, local_branch, repo_owner, repo_name, local_repo_path)
-        #print(merge_base)
 
-        modified_files_local = find_modified_files_local(get_latest_commit_local(local_branch, local_repo_path).sha, merge_base_sha, local_repo_path)
-        print(modified_files_local)
-        modified_files_remote = []
+    remote_branch = find_branch_by_name_remote(api, branch_a)
+    local_branch = find_branch_by_name_local(local_repo_path, branch_b)
+    # if remote_branch and local_branch:
+    #     print(remote_branch, local_branch)
 
-        return conflicted_files
-    except Exception as e:
-        print(f"Error: {e}")
+    merge_base_sha = find_merge_base(remote_branch, local_branch, repo_owner, repo_name, local_repo_path)
+    #print(merge_base)
+
+    latest_commit_local = get_latest_commit_local(local_branch, local_repo_path)
+    modified_files_local = find_modified_files_local(latest_commit_local.sha, merge_base_sha, local_repo_path)
+    #print(modified_files_local)
+
+    latest_commit_remote = get_latest_commit_remote(remote_branch,repo_owner,repo_name)
+    modified_files_remote = find_modified_files_remote(api, latest_commit_remote.sha, merge_base_sha)
+    #print(modified_files_remote)
+
+    for local_file in modified_files_local and modified_files_remote:
+        conflicted_files.append(local_file)
+
+    return conflicted_files
+
 
 def find_branch_by_name_remote(api:str, branch_name:str) -> Branch:
     remote_branches_list = requests.get(api + "/branches").json()
@@ -82,13 +90,18 @@ def find_merge_base(branch_a: Branch, branch_b: Branch, repo_owner:str, repo_nam
             return sha
     return None
 
-def find_modified_files_local(commit_sha: str, merge_base_sha: str, local_repo_path:str) -> list[str]:
-    print(f"Running: git diff-tree --no-commit-id {commit_sha} {merge_base_sha} --name-only -r")
+def find_modified_files_local(latest_commit_sha: str, merge_base_sha: str, local_repo_path:str) -> list[str]:
     wd = os.getcwd()
     os.chdir(local_repo_path)
-    files =  subprocess.run(["git", "diff-tree", "--no-commit-id", "--name-only", commit_sha, merge_base_sha, "-r"], capture_output=True, text=True).stdout.strip().split("\n")
+    modified_files =  subprocess.run(["git", "diff-tree", "--no-commit-id", "--name-only", latest_commit_sha, merge_base_sha, "-r"], capture_output=True, text=True).stdout.strip().split("\n")
     os.chdir(wd)
-    return files
+    return modified_files
+
+def find_modified_files_remote(api:str, latest_commit_sha: str, merge_base_sha:str) -> list[str]:
+    response = requests.get(f"{api}/compare/{latest_commit_sha}...{merge_base_sha}").json()
+    modified_files = [x["filename"] for x in response["files"]]
+    return modified_files
+
 
 if __name__ == "__main__":
     github_username = "39matt"
@@ -98,4 +111,10 @@ if __name__ == "__main__":
     branch_a = "branchA"
     branch_b = "branchB"
 
-    find_conflicts(github_username,repository_name,access_token,local_repo_path,branch_a,branch_b)
+    conflicted_files = find_conflicts(github_username,repository_name,access_token,local_repo_path,branch_a,branch_b)
+    if len(conflicted_files) > 0:
+        print(f"Conflicted files in both remote and local branch:")
+        for file in conflicted_files:
+            print(file)
+    else:
+        print(f"No conflicted files in both remote and local branch")
